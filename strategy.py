@@ -1,4 +1,4 @@
-"""Causal opening-range continuation with fixed fractional stop risk."""
+"""Causal failed-opening-auction reversion with stop-distance sizing."""
 import numpy as np
 import pandas as pd
 
@@ -9,30 +9,41 @@ RISK = 300.0
 
 
 def signals(df: pd.DataFrame) -> np.ndarray:
-    """Trade first range break; size to opposite range and exit at 1R."""
+    """Fade a range break only after it closes back inside the range."""
     out = np.zeros(len(df), dtype=np.int64)
-    t, c = df.ct_sec.values, df.close.values
+    t = df.ct_sec.values
+    c, h, l = df.close.values, df.high.values, df.low.values
     for _, idx in df.groupby("session", sort=False).indices.items():
-        tt, cc = t[idx], c[idx]
+        tt, cc, hh, ll = t[idx], c[idx], h[idx], l[idx]
         rng = (tt >= OR_START) & (tt < OR_END)
         if not rng.any():
             continue
-        hi = df.high.values[idx][rng].max()
-        lo = df.low.values[idx][rng].min()
-        pos, done, stop, target = 0, False, 0.0, 0.0
+        hi, lo = hh[rng].max(), ll[rng].min()
+        pos, direction, done = 0, 0, False
+        stop = target = extreme = 0.0
         for k in range(len(idx)):
             if tt[k] < OR_END or tt[k] >= EXIT:
                 pos = 0
             elif pos == 0 and not done:
-                if cc[k] > hi or cc[k] < lo:
-                    direction = 1 if cc[k] > hi else -1
-                    entry = cc[k]
-                    stop = lo if direction > 0 else hi
-                    dist = max(abs(entry - stop), 0.25)
-                    qty = int(min(50, RISK / (2.0 * dist)))
-                    pos = direction * qty
-                    target = entry + direction * dist
-                    done = True
+                if direction == 0:
+                    if cc[k] > hi:
+                        direction, extreme = 1, hh[k]
+                    elif cc[k] < lo:
+                        direction, extreme = -1, ll[k]
+                elif direction > 0:
+                    extreme = max(extreme, hh[k])
+                    if cc[k] < hi:
+                        entry, stop, target = cc[k], extreme, lo
+                        dist = max(stop - entry, 0.25)
+                        pos = -int(min(50, RISK / (2.0 * dist)))
+                        done = True
+                else:
+                    extreme = min(extreme, ll[k])
+                    if cc[k] > lo:
+                        entry, stop, target = cc[k], extreme, hi
+                        dist = max(entry - stop, 0.25)
+                        pos = int(min(50, RISK / (2.0 * dist)))
+                        done = True
             elif pos != 0 and ((pos > 0 and (cc[k] <= stop or cc[k] >= target)) or
                                (pos < 0 and (cc[k] >= stop or cc[k] <= target))):
                 pos = 0
