@@ -32,7 +32,7 @@ def signals(df):
         close = df.close.values[idx]
         ns = len(LOOKBACKS)
         frac = np.zeros(ns); ent = np.zeros(ns); dst = np.zeros(ns); stop = np.zeros(ns); trades = np.zeros(ns, int)
-        pos, locked = 0, False
+        pos, locked, bias = 0, False, 0
         cash = 0.0  # realized $ (close-priced, pre-cost) for the profit lock
         for k in np.flatnonzero((t >= START) & (t < FLAT)):
             j = done[k]
@@ -52,7 +52,10 @@ def signals(df):
                             frac[s] = 0
                     elif not trades[s] and np.isfinite(tr[s][j]) and np.isfinite(hh[s][j - 1]):
                         d = 1 if c[j] > hh[s][j - 1] else -1 if c[j] < ll[s][j - 1] else 0
+                        if d and bias and d != bias:
+                            d = 0
                         if d:
+                            bias = d
                             dist = max(K_STOP * tr[s][j] * np.sqrt(LOOKBACKS[s]) / 2, 1.0)
                             frac[s] = d * RISK / ns / (2.0 * dist)
                             stop[s] = close[k] - d * dist
