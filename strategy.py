@@ -1,13 +1,14 @@
-"""gts-2: causal intraday range-breakout momentum with volatility-scaled stop sizing."""
+"""gts-2: causal RTH range-breakout momentum, vol-scaled stop, per-day profit lock for combine consistency."""
 import numpy as np
 import pandas as pd
 
 START = 8 * 3600 + 30 * 60      # RTH open, CT
 LAST_ENTRY = 15 * 3600          # no new entries after
 FLAT = 15 * 3600 + 9 * 60       # flatten before 15:10 cutoff
-N_MIN = 10                      # gate 1: breakout lookback, completed minutes
-K_STOP = 0.3                    # gate 2: stop = K * ATR(30m) * sqrt(N)/2
-RISK = 100.0                    # gate 3: $ risk per trade (<= 300 rule)
+N_MIN = 15                      # gate 1: breakout lookback, completed minutes
+K_STOP = 0.9                    # gate 2: stop = K * ATR(30m) * sqrt(N)/2
+RISK = 125.0                    # gate 3: $ risk per trade (<= 300 rule)
+LOCK = 1400.0                   # gate 5: bank open profit at this $ (best day < 50% of $3K target)
 MAX_TRADES = 1                  # gate 4: entries per session
 ATR_MIN = 30
 
@@ -31,11 +32,13 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         # for each row, index of the last fully completed minute (minute < current minute)
         done = np.searchsorted(mids, minute, side="left") - 1
         close = df.close.values[idx]
-        pos, stop, trades = 0, 0.0, 0
+        pos, stop, trades, entry = 0, 0.0, 0, 0.0
         for k in np.flatnonzero((t >= START) & (t < FLAT)):
             j = done[k]
             new_min = k == 0 or minute[k] != minute[k - 1]
-            if pos:
+            if pos and new_min and j >= 0 and pos * (c[j] - entry) * 2.0 >= LOCK:
+                pos = 0
+            elif pos:
                 # stop judged on completed-minute close: ignores 1s noise spikes
                 if new_min and j >= 0 and ((pos > 0 and c[j] <= stop) or (pos < 0 and c[j] >= stop)):
                     pos = 0
@@ -46,6 +49,7 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                         dist = max(K_STOP * tr[j] * np.sqrt(N_MIN) / 2, 1.0)
                         pos = d * int(min(50, RISK / (2.0 * dist)))
                         stop = close[k] - d * dist
+                        entry = close[k]
                         trades += 1
             out[idx[k]] = pos
     return out
