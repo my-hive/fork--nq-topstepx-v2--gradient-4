@@ -1,4 +1,4 @@
-"""Cash-open auction escape; fixed opening range, one risk-sized trade.
+"""Failed cash-open auction escape; trade rejection back into range.
 Six gates: range duration, stop fraction, reward multiple, risk, cutoff, one entry.
 """
 import numpy as np
@@ -17,7 +17,7 @@ def _targets(session, t, high, low, close):
     used = False
     for i in range(len(close)):
         if i == 0 or session[i] != session[i - 1]:
-            hi, lo, pos, used = -np.inf, np.inf, 0, False
+            hi, lo, pos, used, escaped = -np.inf, np.inf, 0, False, 0
         if t[i] < 30600:
             continue
         if t[i] < 30600 + RANGE_SECONDS:
@@ -29,7 +29,11 @@ def _targets(session, t, high, low, close):
             if (pos > 0 and (close[i] <= stop or close[i] >= target)) or (pos < 0 and (close[i] >= stop or close[i] <= target)):
                 pos = 0
         elif not used and np.isfinite(hi) and hi > lo:
-            direction = 1 if close[i] > hi else -1 if close[i] < lo else 0
+            direction = -escaped if lo < close[i] < hi else 0
+            if close[i] > hi:
+                escaped = 1
+            elif close[i] < lo:
+                escaped = -1
             if direction:
                 dist = max(0.25, (hi - lo) * STOP_FRACTION)
                 qty = min(50, int(RISK / (2.0 * dist)))
