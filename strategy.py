@@ -5,7 +5,7 @@ import pandas as pd
 SESSION_START = 8 * 3600 + 30 * 60
 EXIT = 14 * 3600 + 30 * 60
 LOOKBACK = 1800
-ENTRY_Z = 1.5
+ENTRY_Z = 2.0
 EFF_MIN = 0.05
 RISK = 300.0
 
@@ -41,6 +41,6 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                 dist = ENTRY_Z * sd[k]
                 qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
                 pos = direction * qty
-                stop = vwap[k]
+                stop = c[k] - direction * dist
             out[rows[k]] = pos
     return out
