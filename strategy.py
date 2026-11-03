@@ -6,6 +6,7 @@ OR_START = 8 * 3600 + 30 * 60
 OR_END = 8 * 3600 + 45 * 60
 EXIT = 14 * 3600 + 30 * 60
 RISK = 300.0
+MAX_QTY = 10
 
 
 def signals(df: pd.DataFrame) -> np.ndarray:
@@ -35,14 +36,14 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                     if cc[k] < hi:
                         entry, stop, target = cc[k], extreme, lo
                         dist = max(stop - entry, 0.25)
-                        pos = -int(min(50, RISK / (2.0 * dist)))
+                        pos = -int(min(MAX_QTY, RISK / (2.0 * dist)))
                         done = True
                 else:
                     extreme = min(extreme, ll[k])
                     if cc[k] > lo:
                         entry, stop, target = cc[k], extreme, hi
                         dist = max(entry - stop, 0.25)
-                        pos = int(min(50, RISK / (2.0 * dist)))
+                        pos = int(min(MAX_QTY, RISK / (2.0 * dist)))
                         done = True
             elif pos != 0 and ((pos > 0 and (cc[k] <= stop or cc[k] >= target)) or
                                (pos < 0 and (cc[k] >= stop or cc[k] <= target))):
