@@ -1,52 +1,51 @@
-"""Causal VWAP-displacement momentum confirmed by aggressive order flow."""
+"""gts-2: causal intraday range-breakout momentum with volatility-scaled stop sizing."""
 import numpy as np
 import pandas as pd
 
-SESSION_START = 8 * 3600 + 30 * 60
-EXIT = 14 * 3600 + 30 * 60
-LOOKBACK = 1800
-ENTRY_Z = 2.0
-EFF_MIN = 0.05
-DELTA_MIN = 0.05
-RISK = 300.0
+START = 8 * 3600 + 30 * 60      # RTH open, CT
+LAST_ENTRY = 15 * 3600          # no new entries after
+FLAT = 15 * 3600 + 9 * 60       # flatten before 15:10 cutoff
+N_MIN = 10                      # gate 1: breakout lookback, completed minutes
+K_STOP = 0.3                    # gate 2: stop = K * ATR(30m) * sqrt(N)/2
+RISK = 100.0                    # gate 3: $ risk per trade (<= 300 rule)
+MAX_TRADES = 1                  # gate 4: entries per session
+ATR_MIN = 30
 
 
 def signals(df: pd.DataFrame) -> np.ndarray:
-    """Follow efficient VWAP extremes only with same-side aggressor flow."""
     out = np.zeros(len(df), dtype=np.int64)
+    sec = df.ct_sec.values
     for _, idx in df.groupby("session", sort=False).indices.items():
-        t = df.ct_sec.values[idx]
-        use = np.flatnonzero((t >= SESSION_START) & (t < EXIT))
-        if len(use) <= LOOKBACK:
-            continue
-        rows = idx[use]
-        c = df.close.values[rows]
-        h, l = df.high.values[rows], df.low.values[rows]
-        v = np.maximum(df.volume.values[rows], 0.0)
-        price = (h + l + c) / 3.0
-        cv = np.cumsum(v)
-        vwap = np.divide(np.cumsum(price * v), cv, out=price.copy(), where=cv > 0)
-        series = pd.Series(c)
-        sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
-        path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
-        efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
-        delta = pd.Series(df.buy_vol.values[rows] - df.sell_vol.values[rows])
-        delta_sum = delta.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        volume_sum = pd.Series(v).rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        imbalance = (delta_sum / volume_sum.replace(0, np.nan)).to_numpy()
-        pos, stop = 0, 0.0
-        for k in range(len(rows)):
-            if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
-                pos = 0
-            elif pos != 0:
-                if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
+        t = sec[idx]
+        key = np.where(t >= 61200, t - 86400, t)          # session-ordered seconds
+        minute = key // 60
+        # completed-minute OHLC, built only from rows already seen
+        mb = pd.DataFrame({"m": minute, "h": df.high.values[idx], "l": df.low.values[idx],
+                           "c": df.close.values[idx]}).groupby("m", sort=True).agg(h=("h", "max"), l=("l", "min"), c=("c", "last"))
+        mids = mb.index.values
+        h, l, c = mb.h.values, mb.l.values, mb.c.values
+        pc = np.r_[c[0], c[:-1]]
+        tr = pd.Series(np.maximum(h, pc) - np.minimum(l, pc)).rolling(ATR_MIN).mean().values
+        hh = pd.Series(h).rolling(N_MIN).max().values
+        ll = pd.Series(l).rolling(N_MIN).min().values
+        # for each row, index of the last fully completed minute (minute < current minute)
+        done = np.searchsorted(mids, minute, side="left") - 1
+        close = df.close.values[idx]
+        pos, stop, trades = 0, 0.0, 0
+        for k in np.flatnonzero((t >= START) & (t < FLAT)):
+            j = done[k]
+            new_min = k == 0 or minute[k] != minute[k - 1]
+            if pos:
+                # stop judged on completed-minute close: ignores 1s noise spikes
+                if new_min and j >= 0 and ((pos > 0 and c[j] <= stop) or (pos < 0 and c[j] >= stop)):
                     pos = 0
-            elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
-                direction = 1 if c[k] > vwap[k] else -1
-                if direction * imbalance[k] >= DELTA_MIN:
-                    dist = ENTRY_Z * sd[k]
-                    qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
-                    pos = direction * qty
-                    stop = vwap[k]
-            out[rows[k]] = pos
+            elif trades < MAX_TRADES and t[k] < LAST_ENTRY and new_min:
+                if j >= 1 and np.isfinite(tr[j]) and np.isfinite(hh[j - 1]):
+                    d = 1 if c[j] > hh[j - 1] else -1 if c[j] < ll[j - 1] else 0
+                    if d:
+                        dist = max(K_STOP * tr[j] * np.sqrt(N_MIN) / 2, 1.0)
+                        pos = d * int(min(50, RISK / (2.0 * dist)))
+                        stop = close[k] - d * dist
+                        trades += 1
+            out[idx[k]] = pos
     return out
