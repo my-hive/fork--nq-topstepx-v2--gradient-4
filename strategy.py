@@ -10,19 +10,19 @@ mechanism:
    stop = 1.5x median 10-session same-window move.
 causal: every decision uses rows <= current row or fully completed prior
 sessions; state resets each session. sizing: risk $300 / (stop_pts * $2).
-gates: GAP_MIN, STOP_FRAC, K_PRE, K_POST, BE_MULT, LOCK (6/6). RISK=300 is
-the program-mandated per-trade cap, not a tunable gate.
+gates: GAP_MIN, STOP_FRAC, K_PRE, K_POST, LOCK, DAILY_STOP (6/6). RISK=300
+is the program-mandated per-trade cap, not a tunable gate.
 """
 import numpy as np
 import pandas as pd
 
 GAP_MIN = 40.0        # gate 1: min |gap| in points
 STOP_FRAC = 0.5      # gate 2: gap-fade stop fraction of |gap|
-K_PRE = 0.6           # gate 3: pre-open stop = 0.6 x median move
-K_POST = 1.5          # gate 4: post-close stop = 1.5 x median move
+K_PRE = 0.5           # gate 3: pre-open stop = 0.6 x median move
+K_POST = 2.5          # gate 4: post-close stop = 1.5 x median move
 RISK = 300.0          # gate 5: risk budget per trade ($)
 LOCK = 1400.0         # gate 6: daily profit lock ($) - satisfies best-day<50% consistency rule
-BE_MULT = 1.5         # breakeven ratchet (drift streams only): stop -> entry after 1.5R
+DAILY_STOP = -700.0  # daily loss guard ($): flatten rest of session at -500
 
 PRE_IN, PRE_OUT = 2 * 3600, 8 * 3600          # 02:00 -> 08:00 CT
 POST_OUT = 20 * 3600                          # post window: 17:00 -> 20:00 CT
@@ -95,14 +95,10 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                 continue
             val = 0
             if 61200 <= tc < POST_OUT:
-                if post_state != 0 and c[j] - post_entry >= BE_MULT * post_pts:
-                    post_stop = max(post_stop, post_entry)
                 if post_state != 0 and l[j] <= post_stop:
                     post_state = 0
                 val += post_state
             if PRE_IN <= tc < PRE_OUT:
-                if pre_state != 0 and c[j] - pre_entry >= BE_MULT * pre_pts:
-                    pre_stop = max(pre_stop, pre_entry)
                 if pre_state != 0 and l[j] <= pre_stop:
                     pre_state = 0
                 val += pre_state
@@ -126,7 +122,8 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                 fill = c[j] + (0.5 if d_ > 0 else -0.5)
                 est_cash -= d_ * fill * 2.0 + abs(d_) * 2.5
             prev_val = val
-            if est_cash + val * c[j] * 2.0 >= LOCK:
+            eq = est_cash + val * c[j] * 2.0
+            if eq >= LOCK or eq <= DAILY_STOP:
                 locked = True
                 out[j] = 0
                 prev_val = 0
