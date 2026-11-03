@@ -7,9 +7,9 @@ START = 8 * 3600 + 30 * 60
 FLAT = 15 * 3600 + 9 * 60
 LOOKBACKS = (10, 15, 20)        # gate 1: breakout lookbacks (minutes), equal-risk sleeves
 K_STOP = 0.9                    # gate 2: stop = K * ATR30m * sqrt(N)/2, judged on minute close
-RISK = 125.0                    # gate 3: total $ risk across sleeves
+RISK = 140.0                    # gate 3: total $ risk across sleeves
 LOCK = 1400.0                   # gate 4: bank day at this open+realized $ (best day < 50% of $3K)
-ATR_MIN = 30                    # gate 5: ATR window (minutes)
+ATR_MULT = 3                    # gate 5: stop-vol window = ATR_MULT * sleeve lookback (minutes)
 BE = 2                          # gate 6: after +BE*stop-distance move, stop to entry (protect trailing DD)
 
 
@@ -24,7 +24,8 @@ def signals(df):
         mids = mb.index.values
         h, l, c = mb.h.values, mb.l.values, mb.c.values
         pc = np.r_[c[0], c[:-1]]
-        tr = pd.Series(np.maximum(h, pc) - np.minimum(l, pc)).rolling(ATR_MIN).mean().values
+        trs = pd.Series(np.maximum(h, pc) - np.minimum(l, pc))
+        tr = [trs.rolling(n * ATR_MULT).mean().values for n in LOOKBACKS]
         hh = [pd.Series(h).rolling(n).max().values for n in LOOKBACKS]
         ll = [pd.Series(l).rolling(n).min().values for n in LOOKBACKS]
         done = np.searchsorted(mids, minute, side="left") - 1
@@ -49,10 +50,10 @@ def signals(df):
                     if frac[s]:
                         if (frac[s] > 0 and c[j] <= stop[s]) or (frac[s] < 0 and c[j] >= stop[s]):
                             frac[s] = 0
-                    elif not trades[s] and np.isfinite(tr[j]) and np.isfinite(hh[s][j - 1]):
+                    elif not trades[s] and np.isfinite(tr[s][j]) and np.isfinite(hh[s][j - 1]):
                         d = 1 if c[j] > hh[s][j - 1] else -1 if c[j] < ll[s][j - 1] else 0
                         if d:
-                            dist = max(K_STOP * tr[j] * np.sqrt(LOOKBACKS[s]) / 2, 1.0)
+                            dist = max(K_STOP * tr[s][j] * np.sqrt(LOOKBACKS[s]) / 2, 1.0)
                             frac[s] = d * RISK / ns / (2.0 * dist)
                             stop[s] = close[k] - d * dist
                             ent[s] = close[k]; dst[s] = dist
