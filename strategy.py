@@ -6,7 +6,7 @@ from numba import njit
 
 RANGE_SECONDS = 300
 STOP_FRACTION = 1.0
-REWARD = 1.0
+REWARD = 3.0
 RISK = 300.0
 CUTOFF = 54600
 
