@@ -7,7 +7,6 @@ EXIT = 14 * 3600 + 30 * 60
 LOOKBACK = 1800
 ENTRY_Z = 2.0
 EFF_MIN = 0.05
-FLOW_EXIT = 0.05
 RISK = 300.0
 
 
@@ -29,24 +28,22 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         series = pd.Series(c)
         sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
         path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
-        efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
-        delta = pd.Series(df.buy_vol.values[rows] - df.sell_vol.values[rows])
-        delta_sum = delta.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        volume_sum = pd.Series(v).rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        imbalance = (delta_sum / volume_sum.replace(0, np.nan)).to_numpy()
+        net = series.diff(LOOKBACK)
+        efficiency = (net.abs() / path).to_numpy()
+        net = net.to_numpy()
         pos, stop = 0, 0.0
         for k in range(len(rows)):
             if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
                 pos = 0
             elif pos != 0:
-                if ((pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop)
-                        or pos * imbalance[k] <= -FLOW_EXIT):
+                if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
                     pos = 0
             elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
                 direction = 1 if c[k] > vwap[k] else -1
-                dist = ENTRY_Z * sd[k]
-                qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
-                pos = direction * qty
-                stop = vwap[k]
+                if direction * net[k] > 0:
+                    dist = ENTRY_Z * sd[k]
+                    qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
+                    pos = direction * qty
+                    stop = vwap[k]
             out[rows[k]] = pos
     return out
