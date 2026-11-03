@@ -1,4 +1,4 @@
-"""Causal VWAP-displacement momentum confirmed by aggressive order flow."""
+"""Causal VWAP-displacement momentum with volatility-normalized risk."""
 import numpy as np
 import pandas as pd
 
@@ -7,12 +7,12 @@ EXIT = 14 * 3600 + 30 * 60
 LOOKBACK = 1800
 ENTRY_Z = 2.0
 EFF_MIN = 0.05
-DELTA_MIN = 0.05
+FLOW_EXIT = 0.05
 RISK = 300.0
 
 
 def signals(df: pd.DataFrame) -> np.ndarray:
-    """Follow efficient VWAP extremes only with same-side aggressor flow."""
+    """Follow causal VWAP extremes; exit when price returns to entry VWAP."""
     out = np.zeros(len(df), dtype=np.int64)
     for _, idx in df.groupby("session", sort=False).indices.items():
         t = df.ct_sec.values[idx]
@@ -39,14 +39,14 @@ def signals(df: pd.DataFrame) -> np.ndarray:
             if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
                 pos = 0
             elif pos != 0:
-                if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
+                if ((pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop)
+                        or pos * imbalance[k] <= -FLOW_EXIT):
                     pos = 0
             elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
                 direction = 1 if c[k] > vwap[k] else -1
-                if direction * imbalance[k] >= DELTA_MIN:
-                    dist = ENTRY_Z * sd[k]
-                    qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
-                    pos = direction * qty
-                    stop = vwap[k]
+                dist = ENTRY_Z * sd[k]
+                qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
+                pos = direction * qty
+                stop = vwap[k]
             out[rows[k]] = pos
     return out
