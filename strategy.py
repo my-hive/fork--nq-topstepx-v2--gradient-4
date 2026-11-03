@@ -4,7 +4,7 @@ Six gates: range duration, buffer, target fraction, risk, cutoff, one entry.
 import numpy as np
 from numba import njit
 
-RANGE_SECONDS = 1800
+RANGE_SECONDS = 3600
 BUFFER = 0.1
 TARGET_FRACTION = 0.5
 RISK = 300.0
