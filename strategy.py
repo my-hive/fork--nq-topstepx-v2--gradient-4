@@ -1,4 +1,4 @@
-"""Causal VWAP liquidity provision with volatility-normalized risk."""
+"""Causal VWAP-displacement momentum with volatility-normalized risk."""
 import numpy as np
 import pandas as pd
 
@@ -11,7 +11,7 @@ RISK = 300.0
 
 
 def signals(df: pd.DataFrame) -> np.ndarray:
-    """Fade causal VWAP extremes; stop one volatility unit beyond entry."""
+    """Follow causal VWAP extremes; exit when price returns to entry VWAP."""
     out = np.zeros(len(df), dtype=np.int64)
     for _, idx in df.groupby("session", sort=False).indices.items():
         t = df.ct_sec.values[idx]
@@ -26,23 +26,18 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         cv = np.cumsum(v)
         vwap = np.divide(np.cumsum(price * v), cv, out=price.copy(), where=cv > 0)
         sd = pd.Series(c).rolling(LOOKBACK, min_periods=LOOKBACK).std().to_numpy()
-        pos, armed, stop, target = 0, True, 0.0, 0.0
+        pos, stop = 0, 0.0
         for k in range(len(rows)):
             if t[use[k]] < TRADE_START or not np.isfinite(sd[k]) or sd[k] <= 0:
                 pos = 0
             elif pos != 0:
-                if (pos > 0 and (c[k] <= stop or c[k] >= target)) or (pos < 0 and (c[k] >= stop or c[k] <= target)):
-                    hit_target = (pos > 0 and c[k] >= target) or (pos < 0 and c[k] <= target)
+                if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
                     pos = 0
-                    armed = hit_target
-            elif not armed:
-                armed = abs(c[k] - vwap[k]) < sd[k]
             elif abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
-                direction = -1 if c[k] > vwap[k] else 1
-                dist = sd[k]
+                direction = 1 if c[k] > vwap[k] else -1
+                dist = ENTRY_Z * sd[k]
                 qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
                 pos = direction * qty
-                stop = c[k] - direction * dist
-                target = vwap[k]
+                stop = vwap[k]
             out[rows[k]] = pos
     return out
