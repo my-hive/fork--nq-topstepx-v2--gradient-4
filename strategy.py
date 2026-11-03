@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 
 SESSION_START = 8 * 3600 + 30 * 60
-TRADE_START = 9 * 3600
 EXIT = 14 * 3600 + 30 * 60
-LOOKBACK = 300
+LOOKBACK = 1800
 ENTRY_Z = 2.0
+EFF_MIN = 0.20
 RISK = 300.0
 
 
@@ -25,15 +25,18 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         price = (h + l + c) / 3.0
         cv = np.cumsum(v)
         vwap = np.divide(np.cumsum(price * v), cv, out=price.copy(), where=cv > 0)
-        sd = pd.Series(c).rolling(LOOKBACK, min_periods=LOOKBACK).std().to_numpy()
+        series = pd.Series(c)
+        sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
+        path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
+        efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
         pos, stop = 0, 0.0
         for k in range(len(rows)):
-            if t[use[k]] < TRADE_START or not np.isfinite(sd[k]) or sd[k] <= 0:
+            if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
                 pos = 0
             elif pos != 0:
                 if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
                     pos = 0
-            elif abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
+            elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
                 direction = 1 if c[k] > vwap[k] else -1
                 dist = ENTRY_Z * sd[k]
                 qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
