@@ -5,7 +5,7 @@ import pandas as pd
 SESSION_START = 8 * 3600 + 30 * 60
 EXIT = 14 * 3600 + 30 * 60
 LOOKBACK = 1800
-ENTRY_Z = 2.0
+ENTRY_Z = 2.5
 EFF_MIN = 0.05
 RISK = 300.0
 
@@ -28,9 +28,7 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         series = pd.Series(c)
         sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
         path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
-        net = series.diff(LOOKBACK)
-        efficiency = (net.abs() / path).to_numpy()
-        net = net.to_numpy()
+        efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
         pos, stop = 0, 0.0
         for k in range(len(rows)):
             if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
@@ -40,10 +38,9 @@ def signals(df: pd.DataFrame) -> np.ndarray:
                     pos = 0
             elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
                 direction = 1 if c[k] > vwap[k] else -1
-                if direction * net[k] > 0:
-                    dist = ENTRY_Z * sd[k]
-                    qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
-                    pos = direction * qty
-                    stop = vwap[k]
+                dist = ENTRY_Z * sd[k]
+                qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
+                pos = direction * qty
+                stop = vwap[k]
             out[rows[k]] = pos
     return out
