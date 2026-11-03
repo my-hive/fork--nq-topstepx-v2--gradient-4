@@ -1,52 +1,45 @@
-"""Causal VWAP-displacement momentum confirmed by aggressive order flow."""
+"""Cash-open auction escape; fixed opening range, one risk-sized trade.
+Six gates: range duration, stop fraction, reward multiple, risk, cutoff, one entry.
+"""
 import numpy as np
-import pandas as pd
+from numba import njit
 
-SESSION_START = 8 * 3600 + 30 * 60
-EXIT = 14 * 3600 + 30 * 60
-LOOKBACK = 1800
-ENTRY_Z = 2.0
-EFF_MIN = 0.05
-DELTA_MIN = 0.05
+RANGE_SECONDS = 900
+STOP_FRACTION = 0.5
+REWARD = 2.0
 RISK = 300.0
+CUTOFF = 54600
 
-
-def signals(df: pd.DataFrame) -> np.ndarray:
-    """Follow efficient VWAP extremes only with same-side aggressor flow."""
-    out = np.zeros(len(df), dtype=np.int64)
-    for _, idx in df.groupby("session", sort=False).indices.items():
-        t = df.ct_sec.values[idx]
-        use = np.flatnonzero((t >= SESSION_START) & (t < EXIT))
-        if len(use) <= LOOKBACK:
+@njit
+def _targets(session, t, high, low, close):
+    out = np.zeros(len(close), np.int64)
+    hi, lo, pos, stop, target = -np.inf, np.inf, 0, 0.0, 0.0
+    used = False
+    for i in range(len(close)):
+        if i == 0 or session[i] != session[i - 1]:
+            hi, lo, pos, used = -np.inf, np.inf, 0, False
+        if t[i] < 30600:
             continue
-        rows = idx[use]
-        c = df.close.values[rows]
-        h, l = df.high.values[rows], df.low.values[rows]
-        v = np.maximum(df.volume.values[rows], 0.0)
-        price = (h + l + c) / 3.0
-        cv = np.cumsum(v)
-        vwap = np.divide(np.cumsum(price * v), cv, out=price.copy(), where=cv > 0)
-        series = pd.Series(c)
-        sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
-        path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
-        efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
-        delta = pd.Series(df.buy_vol.values[rows] - df.sell_vol.values[rows])
-        delta_sum = delta.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        volume_sum = pd.Series(v).rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).sum()
-        imbalance = (delta_sum / volume_sum.replace(0, np.nan)).to_numpy()
-        pos, stop = 0, 0.0
-        for k in range(len(rows)):
-            if not np.isfinite(sd[k]) or not np.isfinite(efficiency[k]) or sd[k] <= 0:
+        if t[i] < 30600 + RANGE_SECONDS:
+            hi, lo = max(hi, high[i]), min(lo, low[i])
+            continue
+        if t[i] >= CUTOFF:
+            pos = 0
+        elif pos:
+            if (pos > 0 and (close[i] <= stop or close[i] >= target)) or (pos < 0 and (close[i] >= stop or close[i] <= target)):
                 pos = 0
-            elif pos != 0:
-                if (pos > 0 and c[k] <= stop) or (pos < 0 and c[k] >= stop):
-                    pos = 0
-            elif efficiency[k] >= EFF_MIN and abs(c[k] - vwap[k]) >= ENTRY_Z * sd[k]:
-                direction = 1 if c[k] > vwap[k] else -1
-                if direction * imbalance[k] >= DELTA_MIN:
-                    dist = ENTRY_Z * sd[k]
-                    qty = int(min(50, RISK / (2.0 * max(dist, 0.25))))
-                    pos = direction * qty
-                    stop = vwap[k]
-            out[rows[k]] = pos
+        elif not used and np.isfinite(hi) and hi > lo:
+            direction = 1 if close[i] > hi else -1 if close[i] < lo else 0
+            if direction:
+                dist = max(0.25, (hi - lo) * STOP_FRACTION)
+                qty = min(50, int(RISK / (2.0 * dist)))
+                pos = direction * qty
+                stop = close[i] - direction * dist
+                target = close[i] + direction * dist * REWARD
+                used = True
+        out[i] = pos
     return out
+
+def signals(df):
+    """Past/current rows only; targets fill next open, never range-future data."""
+    return _targets(df.session.factorize(sort=False)[0], df.ct_sec.to_numpy(), df.high.to_numpy(), df.low.to_numpy(), df.close.to_numpy())
