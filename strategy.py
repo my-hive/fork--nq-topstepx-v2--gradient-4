@@ -4,7 +4,7 @@ Six gates: range duration, stop fraction, reward multiple, risk, cutoff, one ent
 import numpy as np
 from numba import njit
 
-RANGE_SECONDS = 900
+RANGE_SECONDS = 1800
 STOP_FRACTION = 0.5
 REWARD = 2.0
 RISK = 300.0
