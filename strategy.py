@@ -4,7 +4,7 @@ import pandas as pd
 
 SESSION_START = 8 * 3600 + 30 * 60
 EXIT = 14 * 3600 + 30 * 60
-LOOKBACK = 3600
+LOOKBACK = 1800
 ENTRY_Z = 2.0
 EFF_MIN = 0.05
 RISK = 300.0
