@@ -1,16 +1,16 @@
-"""gts-2: ensemble of RTH range-breakout lookbacks, vol-scaled stops, portfolio daily profit lock."""
+"""gts-2: ensemble of RTH range-breakout lookbacks (one entry per sleeve), vol-scaled stops,
+breakeven after 2R, portfolio daily profit lock."""
 import numpy as np
 import pandas as pd
 
 START = 8 * 3600 + 30 * 60
-LAST_ENTRY = 15 * 3600
 FLAT = 15 * 3600 + 9 * 60
 LOOKBACKS = (10, 15, 20)        # gate 1: breakout lookbacks (minutes), equal-risk sleeves
 K_STOP = 0.9                    # gate 2: stop = K * ATR30m * sqrt(N)/2, judged on minute close
 RISK = 125.0                    # gate 3: total $ risk across sleeves
 LOCK = 1400.0                   # gate 4: bank day at this open+realized $ (best day < 50% of $3K)
-MAX_TRADES = 1                  # gate 5: per sleeve
-ATR_MIN = 30
+ATR_MIN = 30                    # gate 5: ATR window (minutes)
+BE = 2                          # gate 6: after +BE*stop-distance move, stop to entry (protect trailing DD)
 
 
 def signals(df):
@@ -30,7 +30,7 @@ def signals(df):
         done = np.searchsorted(mids, minute, side="left") - 1
         close = df.close.values[idx]
         ns = len(LOOKBACKS)
-        frac = np.zeros(ns); stop = np.zeros(ns); trades = np.zeros(ns, int)
+        frac = np.zeros(ns); ent = np.zeros(ns); dst = np.zeros(ns); stop = np.zeros(ns); trades = np.zeros(ns, int)
         pos, locked = 0, False
         cash = 0.0  # realized $ (close-priced, pre-cost) for the profit lock
         for k in np.flatnonzero((t >= START) & (t < FLAT)):
@@ -44,16 +44,19 @@ def signals(df):
                 for s in range(ns):
                     if locked or j < 1:
                         break
+                    if frac[s] and BE and (c[j] - ent[s]) * np.sign(frac[s]) >= BE * dst[s]:
+                        stop[s] = max(stop[s], ent[s]) if frac[s] > 0 else min(stop[s], ent[s])
                     if frac[s]:
                         if (frac[s] > 0 and c[j] <= stop[s]) or (frac[s] < 0 and c[j] >= stop[s]):
                             frac[s] = 0
-                    elif trades[s] < MAX_TRADES and t[k] < LAST_ENTRY and np.isfinite(tr[j]) and np.isfinite(hh[s][j - 1]):
+                    elif not trades[s] and np.isfinite(tr[j]) and np.isfinite(hh[s][j - 1]):
                         d = 1 if c[j] > hh[s][j - 1] else -1 if c[j] < ll[s][j - 1] else 0
                         if d:
                             dist = max(K_STOP * tr[j] * np.sqrt(LOOKBACKS[s]) / 2, 1.0)
                             frac[s] = d * RISK / ns / (2.0 * dist)
                             stop[s] = close[k] - d * dist
-                            trades[s] += 1
+                            ent[s] = close[k]; dst[s] = dist
+                            trades[s] = 1
                 new = int(np.clip(np.trunc(frac.sum()), -50, 50))
                 if new != pos:
                     cash -= (new - pos) * close[k] * 2.0
