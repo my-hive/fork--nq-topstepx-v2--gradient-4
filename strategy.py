@@ -6,7 +6,7 @@ SESSION_START = 8 * 3600 + 30 * 60
 EXIT = 14 * 3600 + 30 * 60
 LOOKBACK = 1800
 ENTRY_Z = 2.0
-EFF_MIN = 0.04
+EFF_MIN = 0.06
 RISK = 300.0
 
 
@@ -27,7 +27,8 @@ def signals(df: pd.DataFrame) -> np.ndarray:
         vwap = np.divide(np.cumsum(price * v), cv, out=price.copy(), where=cv > 0)
         series = pd.Series(c)
         sd = series.rolling(LOOKBACK // 6, min_periods=LOOKBACK // 6).std().to_numpy()
-        path = series.diff().abs().rolling(LOOKBACK, min_periods=LOOKBACK).sum()
+        # Six causal five-minute legs avoid drowning directional efficiency in 1-second noise.
+        path = series.diff(300).abs().rolling(6, min_periods=6).sum()
         efficiency = (series.diff(LOOKBACK).abs() / path).to_numpy()
         pos, stop = 0, 0.0
         for k in range(len(rows)):
